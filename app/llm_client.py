@@ -8,13 +8,14 @@ from app.config import settings
 client = OpenAI(
     base_url=settings.openrouter_base_url,
     api_key=settings.openrouter_api_key,
+    timeout=settings.openrouter_timeout_seconds,
 )
 
 
 def call_model(
     messages: list,
     model: str | None = None,
-    tools: list = [],
+    tools: list | None = None,
 ):
     """
     Call the LLM with the given messages, model, and tools.
@@ -22,9 +23,12 @@ def call_model(
     instead of touching the client directly, so the model — or even the
     provider — is a one-line change here, not a search-and-replace.
     """
+
+    # todo: asyncroniously save the call to the statistics database
+
     response = client.chat.completions.create(
         model=model or settings.default_model,
         messages=messages,
-        tools=tools,
+        tools=tools if tools is not None else [], # type: ignore
     )
     return response.choices[0].message

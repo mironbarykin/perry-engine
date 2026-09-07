@@ -1,13 +1,29 @@
 import secrets
+from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 
 from app.agent_loop import run_agent_loop
 from app.config import settings
-from app.models import ChatRequest, ChatResponse
+from app.integrations.google import (
+    GoogleIntegrationError,
+    begin_calendar_authorization,
+    create_calendar_event,
+    finish_calendar_authorization,
+    update_calendar_event,
+)
+from app.models import ChatRequest, ChatResponse, SenderIdentity
+from app.storage import confirm_pending_action, initialize_database, resolve_user
 
-app = FastAPI(title="Perry Engine")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="Perry Engine", lifespan=lifespan)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
@@ -24,13 +40,68 @@ def chat(
     request: ChatRequest,
     _: None = Depends(require_api_key),
 ) -> ChatResponse:
-    reply = run_agent_loop(request.user_id, request.message)
-    return ChatResponse(reply=reply)
+    user_id = resolve_user(request.user_id, request.user_name, request.telegram_id)
+    result = run_agent_loop(user_id, request.message)
+    return ChatResponse(
+        reply=result.reply,
+        pending_confirmations=result.pending_confirmations,
+    )
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/integrations/google/calendar/authorize")
+def authorize_google_calendar(
+    sender: SenderIdentity,
+    _: None = Depends(require_api_key),
+) -> dict[str, str]:
+    """Return a consent URL for the communicator to give to its user."""
+    user_id = resolve_user(sender.user_id, sender.user_name, sender.telegram_id)
+    try:
+        return {"authorization_url": begin_calendar_authorization(user_id)}
+    except GoogleIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@app.get("/integrations/google/calendar/callback")
+def google_calendar_callback(request: Request, state: str, error: str | None = None) -> dict[str, str]:
+    """Google redirects here; OAuth state is the one-time authorization proof."""
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Google authorization failed: {error}")
+    try:
+        user_id = finish_calendar_authorization(str(request.url), state)
+    except GoogleIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "connected", "user_id": user_id}
+
+
+@app.post("/confirmations/{confirmation_id}")
+def confirm_action(
+    confirmation_id: str,
+    sender: SenderIdentity,
+    _: None = Depends(require_api_key),
+) -> dict[str, str]:
+    """Execute one approved external action; the LLM cannot invoke this route."""
+    user_id = resolve_user(sender.user_id, sender.user_name, sender.telegram_id)
+    confirmed = confirm_pending_action(confirmation_id, user_id)
+    if confirmed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation is missing, expired, or already used")
+    action_type, payload = confirmed
+    try:
+        if action_type == "calendar.create_event":
+            event = create_calendar_event(user_id, payload["calendar_id"], payload["event"])
+        elif action_type == "calendar.update_event":
+            event = update_calendar_event(
+                user_id, payload["calendar_id"], payload["event_id"], payload["changes"]
+            )
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported confirmation action")
+    except GoogleIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "completed", "event_id": str(event.get("id", ""))}
 
 if __name__ == "__main__":
     import uvicorn
