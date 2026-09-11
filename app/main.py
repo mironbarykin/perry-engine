@@ -11,10 +11,14 @@ from app.integrations.google import (
     begin_calendar_authorization,
     create_calendar_event,
     finish_calendar_authorization,
+    get_calendar_service,
+    get_shared_calendar_ids,
     update_calendar_event,
+    get_tasks_service,
 )
 from app.models import ChatRequest, ChatResponse, SenderIdentity
-from app.storage import confirm_pending_action, initialize_database, resolve_user
+from pydantic import BaseModel, Field
+from app.storage import User, confirm_pending_action, initialize_database, resolve_user
 
 
 @asynccontextmanager
@@ -78,6 +82,51 @@ def google_calendar_callback(request: Request, state: str, error: str | None = N
     return {"status": "connected", "user_id": user_id}
 
 
+class CalendarLinkRequest(BaseModel):
+    calendar_id: str = Field(min_length=1, max_length=500)
+    display_name: str = Field(min_length=1, max_length=250)
+    access_mode: str = Field(pattern="^(read_write|readonly)$")
+
+
+@app.post("/integrations/google/calendars")
+def link_google_calendar(
+    link: CalendarLinkRequest,
+    sender: SenderIdentity,
+    _: None = Depends(require_api_key),
+) -> dict[str, str]:
+    """Link a visible Google calendar to a user for stable LLM selection."""
+    user_id = resolve_user(sender.user_id, sender.user_name, sender.telegram_id)
+    try:
+        if link.access_mode == "readonly":
+            if link.calendar_id.startswith("shared:"):
+                raise GoogleIntegrationError("Use the raw Google calendar ID for a shared calendar")
+            if link.calendar_id not in get_shared_calendar_ids():
+                # A service-account calendar must be explicitly linked and
+                # cannot be inferred from a global configuration value.
+                raise GoogleIntegrationError(
+                    "Read-only service-account calendars must be visible to the configured service account"
+                )
+            calendar_id = link.calendar_id
+        else:
+            calendar_id = link.calendar_id.removeprefix("shared:")
+            response = (
+                get_calendar_service(user_id)
+                .calendarList()
+                .get(calendarId=calendar_id)
+                .execute()
+            )
+            link.display_name = str(response.get("summary") or link.display_name)
+        User.get_by_id(user_id).save_calendar_link(
+            provider="google",
+            calendar_id=calendar_id,
+            display_name=link.display_name,
+            access_mode=link.access_mode,
+        )
+    except GoogleIntegrationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"status": "linked", "user_id": user_id, "calendar_id": calendar_id}
+
+
 @app.post("/confirmations/{confirmation_id}")
 def confirm_action(
     confirmation_id: str,
@@ -97,6 +146,17 @@ def confirm_action(
             event = update_calendar_event(
                 user_id, payload["calendar_id"], payload["event_id"], payload["changes"]
             )
+        elif action_type == "tasks.create_task":
+            task = get_tasks_service(user_id).tasks().insert(
+                tasklist=payload["tasklist_id"], body=payload["task"]
+            ).execute()
+            event = task
+        elif action_type == "tasks.update_task":
+            event = get_tasks_service(user_id).tasks().patch(
+                tasklist=payload["tasklist_id"],
+                task=payload["task_id"],
+                body=payload["changes"],
+            ).execute()
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported confirmation action")
     except GoogleIntegrationError as exc:

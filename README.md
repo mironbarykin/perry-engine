@@ -38,4 +38,39 @@ Calendar read tools can list calendars and events. Calendar writes are two
 steps: the LLM can only create a short-lived proposal; the communicator must
 display it and call `POST /confirmations/{confirmation_id}` after an explicit
 user approval. This prevents the model from silently creating or editing an
-event.
+event. Reconnect Google after enabling Tasks because the OAuth consent must
+include the Tasks scope. Tasks use the same encrypted Google credentials and
+follow the same confirmation rule for creates and updates.
+
+### Shared and family calendars
+
+For Google calendars owned by friends or family, the supported no-refresh-token
+option is a Google service account whose email has been explicitly granted
+read-only access to each calendar. Set `GOOGLE_SERVICE_ACCOUNT_FILE` to the
+credential JSON and `GOOGLE_SHARED_CALENDAR_IDS` to a comma-separated allowlist.
+Service accounts cannot access arbitrary private calendars, and the integration
+never writes to these shared calendars. Link a calendar to a user with
+`POST /integrations/google/calendars`, passing the sender identity and:
+
+```json
+{
+  "calendar_id": "friend-calendar-id",
+  "display_name": "Sasha",
+  "access_mode": "readonly"
+}
+```
+
+The link is stored in SQLite by user, so Sasha's user account and Miron's user
+account can each have different shared calendars. Use `access_mode:
+"read_write"` to link multiple calendars from that user's own Google account;
+the bot receives those linked names and IDs when it lists calendars.
+
+Apple calendars cannot be accessed with a Google service account. Add them
+through an Apple/iCloud CalDAV integration (using an app-specific password)
+before treating them as availability sources; this repository currently only
+implements Google OAuth and the optional Google service-account source.
+
+<!-- todo: get the user's if registered, create accounts for them, add their personal info in the sqlite, add miron's personal info there too, make sure it is editable by the AI itself, ask miron if he knows those people and ask to provide more personal information about who that is -->
+<!-- todo: startup the scheduler, make sure it is running and processing tasks, add a functionality of creating tasks from AI, use it without memory, but give needed instructions, create DB table instructions editable from the Miron's account  -->
+<!-- todo: automatics : review commuting details for next week, suggest moving some events and commuting types - have a threat for that conversation -->
+<!-- todo: automatics : review sport details for next week, see how much things i have to do regarding sport to upkeep my health - have a threat for that conversation -->

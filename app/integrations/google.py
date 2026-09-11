@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
 from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -16,13 +17,7 @@ import httplib2
 from oauthlib.oauth2.rfc6749.errors import OAuth2Error
 
 from app.config import settings
-from app.storage import (
-    consume_oauth_state,
-    get_connected_account,
-    save_connected_account,
-    save_oauth_state,
-    user_data_path,
-)
+from app.storage import User, consume_oauth_state
 
 GOOGLE_PROVIDER = "google"
 CALENDAR_SCOPES = [
@@ -30,7 +25,9 @@ CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/tasks",
 ]
+SHARED_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 TOKEN_FILENAME = "google/calendar-credentials.fernet"
 
 
@@ -106,12 +103,12 @@ def begin_calendar_authorization(user_id: str) -> str:
     )
     if not flow.code_verifier:
         raise GoogleIntegrationError("Could not create the Google OAuth PKCE verifier")
-    save_oauth_state(user_id, state, flow.code_verifier, expires_at)
+    User.get_by_id(user_id).save_oauth_state(state, flow.code_verifier, expires_at)
     return authorization_url
 
 
 def _token_path(user_id: str) -> Path:
-    path = user_data_path(user_id) / TOKEN_FILENAME
+    path = User.get_by_id(user_id).data_path / TOKEN_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -119,8 +116,7 @@ def _token_path(user_id: str) -> Path:
 def _save_credentials(user_id: str, credentials: Credentials, account_id: str) -> None:
     token_path = _token_path(user_id)
     token_path.write_bytes(_fernet().encrypt(credentials.to_json().encode()))
-    save_connected_account(
-        user_id=user_id,
+    User.get_by_id(user_id).save_connected_account(
         provider=GOOGLE_PROVIDER,
         provider_account_id=account_id,
         scopes=" ".join(credentials.scopes or CALENDAR_SCOPES),
@@ -149,7 +145,6 @@ def finish_calendar_authorization(authorization_response: str, state: str) -> st
             "oauth2",
             "v2",
             credentials=credentials,
-            http=httplib2.Http(timeout=settings.google_api_timeout_seconds),
             cache_discovery=False,
         )
         .userinfo()
@@ -164,10 +159,10 @@ def finish_calendar_authorization(authorization_response: str, state: str) -> st
 
 
 def get_calendar_service(user_id: str):
-    account = get_connected_account(user_id, GOOGLE_PROVIDER)
+    account = User.get_by_id(user_id).get_connected_account(GOOGLE_PROVIDER)
     if account is None:
         raise GoogleIntegrationError("Google Calendar is not connected for this user")
-    token_path = user_data_path(user_id) / str(account["token_file"])
+    token_path = User.get_by_id(user_id).data_path / str(account["token_file"])
     try:
         credentials = Credentials.from_authorized_user_info(
             json.loads(_fernet().decrypt(token_path.read_bytes()).decode())
@@ -183,7 +178,56 @@ def get_calendar_service(user_id: str):
         "calendar",
         "v3",
         credentials=credentials,
-        http=httplib2.Http(timeout=settings.google_api_timeout_seconds),
+        cache_discovery=False,
+    )
+
+
+def get_shared_calendar_service():
+    """Build a read-only service for calendars explicitly shared with Perry."""
+    path = settings.google_service_account_file
+    if path is None or not path.is_file():
+        raise GoogleIntegrationError("Shared Google calendars are not configured")
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            str(path), scopes=SHARED_CALENDAR_SCOPES
+        )
+    except (OSError, ValueError) as exc:
+        raise GoogleIntegrationError("Shared Google service-account credentials are invalid") from exc
+    return build(
+        "calendar",
+        "v3",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+
+
+def get_shared_calendar_ids() -> set[str]:
+    """Return calendars visible to the configured service account."""
+    response = get_shared_calendar_service().calendarList().list().execute()
+    return {str(item["id"]) for item in response.get("items", []) if item.get("id")}
+
+
+def get_tasks_service(user_id: str):
+    """Return Google Tasks using the user's existing Google OAuth account."""
+    account = User.get_by_id(user_id).get_connected_account(GOOGLE_PROVIDER)
+    if account is None:
+        raise GoogleIntegrationError("Google Tasks is not connected; connect Google Calendar first")
+    token_path = User.get_by_id(user_id).data_path / str(account["token_file"])
+    try:
+        credentials = Credentials.from_authorized_user_info(
+            json.loads(_fernet().decrypt(token_path.read_bytes()).decode())
+        )
+    except (FileNotFoundError, InvalidToken, json.JSONDecodeError, ValueError) as exc:
+        raise GoogleIntegrationError("Stored Google credentials are unavailable or invalid") from exc
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        _save_credentials(user_id, credentials, str(account["provider_account_id"]))
+    if not credentials.valid:
+        raise GoogleIntegrationError("Google authorization has expired; reconnect Google")
+    return build(
+        "tasks",
+        "v1",
+        credentials=credentials,
         cache_discovery=False,
     )
 
@@ -199,3 +243,5 @@ def update_calendar_event(user_id: str, calendar_id: str, event_id: str, changes
         .patch(calendarId=calendar_id, eventId=event_id, body=changes)
         .execute()
     )
+
+# todo: allow friends to clearly send firstly text calendars, later also photos of their calendars/plans and llm structure it for future analysis and planning. This would be a great way to allow friends to share their plans with each other and the LLM can help us find common free time. The LLM could also suggest events based on our shared calendars.fine what i expect from the calendar tool, add instructions on how to style my calendar events

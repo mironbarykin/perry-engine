@@ -20,6 +20,7 @@ from app.main import app
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("PERRY_PORT", "8000"))
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get("PERRY_REQUEST_TIMEOUT_SECONDS", "180"))
 BASE_URL = f"http://{HOST}:{PORT}"
 
 
@@ -35,13 +36,17 @@ def api_request(path: str, body: dict | None = None) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise RuntimeError(f"Engine returned {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Cannot reach Perry Engine at {BASE_URL}: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Perry Engine did not answer within {REQUEST_TIMEOUT_SECONDS:g} seconds"
+        ) from exc
 
 
 def start_engine_if_needed() -> uvicorn.Server | None:

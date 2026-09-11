@@ -1,8 +1,8 @@
 # Add each user-scoped tool module here. A tool function receives a trusted
 # ToolContext; it never accepts a user ID from the LLM's arguments.
-from app.tools import calendar
+from app.tools import calendar, tasks
 
-_TOOLS = [*calendar.TOOLS]
+_TOOLS = [*calendar.TOOLS, *tasks.TOOLS]
 
 TOOLS = [schema for schema, _, _ in _TOOLS]
 FUNCTIONS = {schema["function"]["name"]: run for schema, _, run in _TOOLS}
