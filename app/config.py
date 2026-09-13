@@ -34,9 +34,10 @@ class Settings(BaseSettings):
     max_working_turns: int = 8       # sliding window size
     working_memory_max_age_days: int = Field(default=3, ge=1)
     max_profile_chars: int = 1600    # ~400 tokens, rough cap on the core profile
-    # Calendar planning can need a discovery call plus several follow-ups, but
-    # remains bounded so a confused model cannot run indefinitely.
-    max_loop_iterations: int = Field(default=6, ge=1)
+    # Calendar planning can need discovery calls plus one proposal per event.
+    # Keep this bounded, but allow a normal multi-event planning request to
+    # reach a final answer after its confirmations have been prepared.
+    max_loop_iterations: int = Field(default=12, ge=1)
 
     # Everything that must survive a container restart lives on the mounted
     # volume. Keep application code and secrets out of this directory.

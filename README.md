@@ -42,6 +42,11 @@ event. Reconnect Google after enabling Tasks because the OAuth consent must
 include the Tasks scope. Tasks use the same encrypted Google credentials and
 follow the same confirmation rule for creates and updates.
 
+Calendar event reads include Google `color_id` values and their resolved
+foreground/background colors when available. Event proposals and updates can
+set `color_id` values from Google's 1-11 event-color palette; writes still
+require confirmation.
+
 ### Shared and family calendars
 
 For Google calendars owned by friends or family, the supported no-refresh-token
@@ -65,6 +70,10 @@ account can each have different shared calendars. Use `access_mode:
 "read_write"` to link multiple calendars from that user's own Google account;
 the bot receives those linked names and IDs when it lists calendars.
 
+Google Task list IDs are refreshed from the Tasks API before reading or
+proposing changes. This avoids reusing stale IDs from an old conversation;
+use the task-list listing tool when selecting a specific list.
+
 Apple calendars cannot be accessed with a Google service account. Add them
 through an Apple/iCloud CalDAV integration (using an app-specific password)
 before treating them as availability sources; this repository currently only
@@ -74,3 +83,6 @@ implements Google OAuth and the optional Google service-account source.
 <!-- todo: startup the scheduler, make sure it is running and processing tasks, add a functionality of creating tasks from AI, use it without memory, but give needed instructions, create DB table instructions editable from the Miron's account  -->
 <!-- todo: automatics : review commuting details for next week, suggest moving some events and commuting types - have a threat for that conversation -->
 <!-- todo: automatics : review sport details for next week, see how much things i have to do regarding sport to upkeep my health - have a threat for that conversation -->
+<!-- todo: automatics : dayli review tasks and events for tomorrow/week, find conflicts and problems, distribute, suggest corrections -->
+
+<!-- todo: automatics : on parents requests, and dayli, review my schedyle for a given date (today, tomorrow, weekend) and respond with my plans parents are supposed to know about and distribution of when exactly i am going to be at home and when away, so they can think about food -->

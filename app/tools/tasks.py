@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, Field, model_validator
+from googleapiclient.errors import HttpError
 
 from app.integrations.google import get_tasks_service
 from app.storage import User
@@ -49,12 +50,39 @@ def list_task_lists(context: ToolContext, **_: object) -> str:
     return json.dumps([{"id": item.get("id"), "title": item.get("title")} for item in response.get("items", [])])
 
 
+def _resolve_tasklist_id(service, tasklist_id: str) -> str:
+    response = service.tasklists().list(maxResults=100).execute()
+    lists = [item for item in response.get("items", []) if item.get("id")]
+    if tasklist_id == "@default":
+        if not lists:
+            raise ValueError("No Google Task lists are available")
+        return str(lists[0]["id"])
+    if any(item["id"] == tasklist_id for item in lists):
+        return tasklist_id
+    raise ValueError(
+        "Google Task list was not found. Use tasks_list_task_lists and select a current ID."
+    )
+
+
 def list_tasks(context: ToolContext, tasklist_id: str = "@default", show_completed: bool = False, max_results: int = 50) -> str:
-    response = get_tasks_service(context.user_id).tasks().list(
-        tasklist=tasklist_id, showCompleted=show_completed, showHidden=False, maxResults=max_results
-    ).execute()
+    service = get_tasks_service(context.user_id)
+    try:
+        resolved_id = _resolve_tasklist_id(service, tasklist_id)
+        response = service.tasks().list(
+            tasklist=resolved_id, showCompleted=show_completed, showHidden=False, maxResults=max_results
+        ).execute()
+    except (HttpError, ValueError) as exc:
+        if isinstance(exc, HttpError) and exc.resp.status != 404:
+            raise
+        return json.dumps(
+            {
+                "status": "invalid_tasklist",
+                "message": str(exc),
+                "action": "Call tasks_list_task_lists and retry with a current tasklist_id.",
+            }
+        )
     return json.dumps(
-        [{"id": item.get("id"), "title": item.get("title"), "notes": item.get("notes"),
+        [{"id": item.get("id"), "tasklist_id": resolved_id, "title": item.get("title"), "notes": item.get("notes"),
           "due": item.get("due"), "status": item.get("status"), "completed": item.get("completed")}
          for item in response.get("items", [])]
     )
@@ -65,6 +93,7 @@ def _expires_at() -> str:
 
 
 def propose_task(context: ToolContext, tasklist_id: str, title: str, notes: str | None = None, due: datetime | None = None) -> str:
+    tasklist_id = _resolve_tasklist_id(get_tasks_service(context.user_id), tasklist_id)
     task = {"title": title}
     if notes is not None:
         task["notes"] = notes
@@ -78,6 +107,7 @@ def propose_task(context: ToolContext, tasklist_id: str, title: str, notes: str 
 
 def propose_task_update(context: ToolContext, tasklist_id: str, task_id: str, title: str | None = None,
                         notes: str | None = None, due: datetime | None = None, status: str | None = None) -> str:
+    tasklist_id = _resolve_tasklist_id(get_tasks_service(context.user_id), tasklist_id)
     changes = {key: value for key, value in {"title": title, "notes": notes, "status": status}.items() if value is not None}
     if due is not None:
         changes["due"] = due.isoformat()
