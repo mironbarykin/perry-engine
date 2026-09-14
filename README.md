@@ -79,6 +79,7 @@ through an Apple/iCloud CalDAV integration (using an app-specific password)
 before treating them as availability sources; this repository currently only
 implements Google OAuth and the optional Google service-account source.
 
+<!-- todo: save people's information in the database -> all the ones i mention, and are mentioned in my calendar, etc, connect to google contacts, and save their information to there, or to my database, make possible for miron to add info to those people, sometimes correlate them with users -->
 <!-- todo: get the user's if registered, create accounts for them, add their personal info in the sqlite, add miron's personal info there too, make sure it is editable by the AI itself, ask miron if he knows those people and ask to provide more personal information about who that is -->
 <!-- todo: startup the scheduler, make sure it is running and processing tasks, add a functionality of creating tasks from AI, use it without memory, but give needed instructions, create DB table instructions editable from the Miron's account  -->
 <!-- todo: automatics : review commuting details for next week, suggest moving some events and commuting types - have a threat for that conversation -->

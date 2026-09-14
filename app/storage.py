@@ -129,6 +129,43 @@ def initialize_database() -> None:
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS basketball_leagues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                liga_id INTEGER UNIQUE NOT NULL,
+                verband_id INTEGER NOT NULL DEFAULT 11,
+                klasse TEXT NOT NULL DEFAULT '',
+                altersklasse TEXT NOT NULL DEFAULT '',
+                geschlecht TEXT NOT NULL DEFAULT '',
+                bezirk TEXT NOT NULL DEFAULT '',
+                kreis TEXT NOT NULL DEFAULT '',
+                liganame TEXT NOT NULL,
+                liganr TEXT NOT NULL DEFAULT '',
+                short_name TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_bball_leagues_verband ON basketball_leagues(verband_id);
+            CREATE INDEX IF NOT EXISTS idx_bball_leagues_short_name ON basketball_leagues(short_name);
+            CREATE INDEX IF NOT EXISTS idx_bball_leagues_liganr ON basketball_leagues(liganr);
+
+            CREATE TABLE IF NOT EXISTS basketball_games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                liga_id INTEGER NOT NULL REFERENCES basketball_leagues(liga_id) ON DELETE CASCADE,
+                spiel_nr INTEGER NOT NULL,
+                spieltag INTEGER NOT NULL,
+                datum TEXT NOT NULL,
+                heim TEXT NOT NULL,
+                gast TEXT NOT NULL,
+                spielhalle TEXT NOT NULL DEFAULT '',
+                schiedsrichter TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                UNIQUE(liga_id, spiel_nr)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bball_games_liga_datum ON basketball_games(liga_id, datum);
+
+            CREATE TABLE IF NOT EXISTS basketball_league_sync (
+                liga_id INTEGER PRIMARY KEY,
+                last_synced_at TEXT NOT NULL
+            );
             """
         )
         oauth_state_columns = {row["name"] for row in db.execute("PRAGMA table_info(oauth_states)")}
