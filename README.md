@@ -24,9 +24,10 @@ the local API when needed, chats as `p1`, and supports `/connect-calendar`.
 ## Google Calendar
 
 1. In Google Cloud, create a **Web application** OAuth client, enable Google
-   Calendar API, and register the exact callback URL
-   `http://127.0.0.1:8000/integrations/google/calendar/callback` for the
-   terminal communicator (or your real HTTPS engine URL later).
+   Calendar API, and register the exact callback URL configured in
+   `GOOGLE_OAUTH_REDIRECT_URI`. For the deployed engine, this is
+   `https://engine.perry.barykin.de/integrations/google/calendar/callback`.
+   Localhost may use the HTTP callback shown in `.env.example` comments.
 2. Fill in the four `GOOGLE_*` values in `.env`. Generate the Fernet key using
    the command in `.env.example`; do not rotate it while existing credentials
    still need to be decrypted.
@@ -42,10 +43,20 @@ event. Reconnect Google after enabling Tasks because the OAuth consent must
 include the Tasks scope. Tasks use the same encrypted Google credentials and
 follow the same confirmation rule for creates and updates.
 
-Calendar event reads include Google `color_id` values and their resolved
-foreground/background colors when available. Event proposals and updates can
-set `color_id` values from Google's 1-11 event-color palette; writes still
-require confirmation.
+Calendar event reads include exactly `color_id`, `color` (the background hex
+value), and `color_name`. The event color is preferred; if the event has no
+color, the calendar default is used. Google exposes colors as numeric IDs and
+hex values, so Perry maps IDs to the stable palette names `lavender`, `sage`,
+`grape`, `flamingo`, `banana`, `tangerine`, `peacock`, `graphite`,
+`blueberry`, `basil`, and `tomato` only when the returned hex matches the
+palette. A custom calendar color can therefore have a numeric `color_id` but
+`color_name: null`; the hex value is authoritative. Calendar CRUD
+create/update operations accept `color_id` or `color_name`; the color is
+always written to the event itself and writes still require confirmation.
+
+If a proposed update targets an event that was deleted or changed before
+confirmation, the confirmation endpoint returns a conflict instead of a
+server error. Refresh the calendar and ask Perry to prepare a new proposal.
 
 ### Shared and family calendars
 
@@ -87,3 +98,47 @@ implements Google OAuth and the optional Google service-account source.
 <!-- todo: automatics : dayli review tasks and events for tomorrow/week, find conflicts and problems, distribute, suggest corrections -->
 
 <!-- todo: automatics : on parents requests, and dayli, review my schedyle for a given date (today, tomorrow, weekend) and respond with my plans parents are supposed to know about and distribution of when exactly i am going to be at home and when away, so they can think about food -->
+
+<!-- todo: Make formed messages easily copied ;) ready for telegram too -->
+<!-- todo: analyze previous games of the team (basketball-bunt) -->
+
+<!-- todo: if it's an idea safe it in tasks with 💡, automatics: screen for ideas every once in a while, think about other possibilities and ask Miron about the ideas continuation! relate ideas to projects if possible, track projects progress, ask for clarification and push to finish those projects, check in every once in a while -->
+
+<!-- todo: refactor all manipulations with calendar, task, etc, have one function for CRUD and one for GET -->
+<!-- todo: easy edit only one or a few events without touching others... -->
+
+<!-- todo: return proposed events, not via LLM, but from the db, with a simple parser, make it easy to edit only one maybe with cheaper model, etc. -->
+
+<!-- todo: devide and treat the data (.csv) or messaged tables, .md, etc. as data sources and give them a way to be accessed and manipulated by the LLM. but create a summary of previous conversations. -->
+
+<!-- todo: connect the cognee -->
+<!-- todo: allow manipulation the automations and their messages (prompts) and shortcuts (/commands) via bot ;) -->
+<!-- todo: message creating agent (general agent creating, agent calling agents) -->
+
+<!-- todo: switch to no memory mode -->
+
+<!-- todo: maps / public transport API -->
+
+> This is a weekly automatic. Review the calendar for (dates) configure the transportation plan. Propose events, consider public transport, car (via parents) and cycling or running, choose the most convenient and quick ones. Use emojis like : 🚗🚇🚆🚲 instead of event names, followed by locations. Example : "🚗 home → school (dad)" or "🚇home → rso". Dublicate events in sport calendar if commuting via cycling or running, don't use emojis in duplicates. Keep in mind basketball games (coaching - at least 45 mins, referee - 60-30 mins), or school (if showering) needs time before arrival.
+> > This is a daily automatic. Review the commuting calendar for (day) and review the transportation plan, confirm it alligns with other events and propose changes if needed. Validate the public transport commuting times needed via tools. Return proposals if needed, and a quick overview for Miron.
+
+> This is an automatic. Review the calendar for (dates) configure the nutritions plan. Propose events (named: breakfast, brunch, lunch, dinner, snack), consider the meals, that could be taken with and eaten on the go (also consider proper meals like this : example rice and chicken + vegie bowl, or just carbs + protein + vegie sources). Usually eaten on the go : bagel with putenbrust, bananas, ricewaffles, overnight oats. Consider adding a buffer time before sport's activities for correct digesting. Distribute the meals within 3-4 hours intervals. Additionally consider time needed for shopping and cooking, and propose events for them. If there are sport activities, prioritize digesting time before them. If the meal is supposed to be eaten at home, add 🏠 emoji after the name.
+> > This is a daily automatic. Review the food calendar for (day) and review the nutrition plan, confirm it alligns with other events and propose changes if needed. Return proposals if needed, and a quick overview for Miron.
+
+
+> This is an automatic. Review the calendar for (dates) configure the sports plan. Propose events, consider the sport activities like gym (3x week, 1.5h), running (2x week, 0.5-1h), swimming (1x week, 1.5h) and cycling (commuting) alongside basketball refereeing, and the time needed for them and for showering after sport activities, and the time needed for digesting after meals. Distribute the sport evenly throughout the week. Do not add events if there are basketball activities, prioritize refereeing over gym over running over swimming.
+> > This is an automatic. Review the calendar for (dates) configure the sports plan. Consider the sport activities like gym (3x week, 2h with shower & sauna), running (2x week, 0.5-1h), swimming (1x week, 1.5h) and cycling (commuting) alongside basketball refereeing, and the time needed for them and for showering after sport activities, and the time needed for digesting after meals. Analyze and give your opinion on the current sports plan, and propose changes to it, if needed, change naming and description if required. In the description, provide a summary of the session, specifically what is trained and what for (for gym mention body parts, but not exercises, for running mention distance and pace). Distribute the sport evenly throughout the week. Do not add events if there are basketball activities, prioritize refereeing over gym over running over swimming. If applying changes, mention reasons for that.
+
+> This is an automatic. Revew the calendar for (dates) configure spectator game plans. Find games in professional basketball leagues (BBL, ProA, ProB, 1RLH, 2RLH, WBV Pokal Herren) closest or at places where Miron is going to be during those dates, analyze teams and officials, rate those games and prepare top games to attend, consider travel time. Do not create events proposals yet. Prioritize already entered basketball events, but still propose spectating games if other events are movable.
+>> For games No. (numbers) create events in calendar named "League Spectator Game (Referees)" and add all additional details to the event's description.
+
+> This is an automatic. Review the calendar for (dates) configure coding plan. Propose events, consider the time needed for coding currently active projects (see tasks list "Coding"), and their location, attempt to schedule coding session the way, that it psychologically supports motivation by completing small tasks quicker. Assign tasks's dates during the coding session times. Try to distribute the coding evenly throughout the week.
+
+> This is a parent's request. Refresh all events in all calendars. Respond in Russian. Review the calendar for (dates) and respond with a summary of Miron's plans, including when he is at home and when he is away, so that they can plan food accordingly. Make it quickly understandable. 
+> This is a parent's request. Refresh all events in all calendars. Respond in Russian. Review the calendar for (dates) and respond with times and events Miron needs to be driven to and taken from by car. Make it quickly understandable. Include: departure time from home, expected arriving time + time in road + kms. Clear departure and destination places, with links for google maps put into the adresses for easy click.
+
+> This is an automatic. Review my inboxed google tasks (or ones without a date, or once staged on Sunday 22:22, or once planned to be done during the dates) and compare it with my schedule for (dates). Find tasks that could be done during the time I have free during (dates), and propose times for them, move to a corresponding list. Consider the time needed for each task, and it's importance and deadline, add one if not existent, as well as location they could/should be done more efficient. If you need to gather more information about a task, ask me for it. Ignore coding tasks. Do not set dates for Money tasks. Do not propose tasks immediately, first gather all required information. Rename tasks if needed in english and following event's naming rules. If tasks are not possible to do during the week, plan them for Sunday 22:22, they will be assigned during next automatic review.
+
+> This is an automatic. Review my basketball referee games for the (dates) and create tasks with whatsapp messages for referee colleagues, put them 3 or 4 days in advance dependable on wether I am a SR1 or SR2. In the message itself include the location, time of tipoff, league, and when I would be there (time). Example : "Hallo Luke,\n wir pfeifen zusammen am Sonntag (20.09.) U16 Landesliga (SG ART Giants Düsseldorf vs. DJK Bad Münstereifel) in der Halle Aldekerk (Adresse) um 12:00 Uhr. Ich bin gegen 11:25 Uhr in der Halle. Habe neues Silber und Schwarz und altes Silber, was würdest du anziehen?) \n Bis dann! VG Miron ;)"
+
+> This is an automatic. Review my basketball coach game for the (dates) and return a message in ``` with the details for players and parents, including the location, time of tipoff, against whom, and where players are supposed to be there. Finish it with VG Miron ;)"

@@ -36,10 +36,13 @@ Calendar using /connect-calendar before giving calendar-specific advice. Never
 fill a failed or empty calendar lookup with remembered or invented events.
 For multi-step calendar requests, finish the collision analysis before
 preparing event proposals. After preparing proposals, always provide a concise
-summary and clearly state that confirmation is still required.
-Calendar event results include Google color IDs and color values when
-available. Use those values when the user asks about colors, and use the
-event color_id field when proposing a color change.
+summary and clearly state that confirmation is still required, always including the date.
+Calendar event results include color_id, color (a background hex value), and
+color_name. The color is taken from the event first, or the calendar default
+when the event has no color. When proposing a color change, use calendar_crud
+color_id or color_name. Name of events should be lowercased,
+and as short as possible, include additional details in the description.
+If talking about specific date, consider the closest weekday to that date.
 """
 
 

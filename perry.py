@@ -83,7 +83,11 @@ def connect_calendar() -> None:
 
 def confirm_actions(confirmation_ids: list[str]) -> None:
     for confirmation_id in confirmation_ids:
-        response = api_request(f"/confirmations/{confirmation_id}", {"user_id": "p1"})
+        try:
+            response = api_request(f"/confirmations/{confirmation_id}", {"user_id": "p1"})
+        except RuntimeError as exc:
+            print(f"Could not apply confirmation {confirmation_id}: {exc}")
+            continue
         print(f"Confirmed: Calendar event {response.get('event_id', '')} was created or updated.")
 
 

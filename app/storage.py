@@ -120,7 +120,8 @@ def initialize_database() -> None:
                 schedule_json TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                action_prompt TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS oauth_states (
                 state TEXT PRIMARY KEY,
@@ -175,8 +176,8 @@ def initialize_database() -> None:
         now = _now()
         db.execute(
             """
-            INSERT INTO users (id, display_name, core_profile, created_at, updated_at)
-            VALUES ('p1', 'Miron', ?, ?, ?)
+            INSERT INTO users (id, display_name, telegram_id, core_profile, created_at, updated_at)
+            VALUES ('p1', 'Miron', 1955285579, ?, ?, ?)
             ON CONFLICT(id) DO NOTHING
             """,
             (MIRON_PROFILE, now, now),

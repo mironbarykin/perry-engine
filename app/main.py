@@ -1,8 +1,10 @@
 import secrets
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
+from googleapiclient.errors import HttpError
 
 from app.agent_loop import run_agent_loop
 from app.config import settings
@@ -76,9 +78,24 @@ def google_calendar_callback(request: Request, state: str, error: str | None = N
     if error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Google authorization failed: {error}")
     try:
-        user_id = finish_calendar_authorization(str(request.url), state)
+        # The app may see the proxy's internal HTTP URL even when the public
+        # callback is HTTPS. OAuthlib validates the authorization response
+        # scheme, so rebuild it from the configured canonical redirect URI.
+        authorization_response = (
+            f"{settings.google_oauth_redirect_uri}?{urlencode(request.query_params.multi_items())}"
+        )
+        user_id = finish_calendar_authorization(authorization_response, state)
     except GoogleIntegrationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            detail = (
+                "The calendar event or task no longer exists. "
+                "Refresh the calendar and create a new proposal."
+            )
+        else:
+            detail = f"Google rejected the confirmed action: {exc}"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
     return {"status": "connected", "user_id": user_id}
 
 
@@ -146,6 +163,11 @@ def confirm_action(
             event = update_calendar_event(
                 user_id, payload["calendar_id"], payload["event_id"], payload["changes"]
             )
+        elif action_type == "calendar.delete_event":
+            get_calendar_service(user_id).events().delete(
+                calendarId=payload["calendar_id"], eventId=payload["event_id"]
+            ).execute()
+            event = {"id": payload["event_id"]}
         elif action_type == "tasks.create_task":
             task = get_tasks_service(user_id).tasks().insert(
                 tasklist=payload["tasklist_id"], body=payload["task"]
@@ -157,10 +179,24 @@ def confirm_action(
                 task=payload["task_id"],
                 body=payload["changes"],
             ).execute()
+        elif action_type == "tasks.delete_task":
+            get_tasks_service(user_id).tasks().delete(
+                tasklist=payload["tasklist_id"], task=payload["task_id"]
+            ).execute()
+            event = {"id": payload["task_id"]}
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported confirmation action")
     except GoogleIntegrationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            detail = (
+                "The calendar event or task no longer exists. "
+                "Refresh the calendar and create a new proposal."
+            )
+        else:
+            detail = f"Google rejected the confirmed action: {exc}"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
     return {"status": "completed", "event_id": str(event.get("id", ""))}
 
 if __name__ == "__main__":

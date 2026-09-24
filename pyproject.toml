@@ -15,7 +15,8 @@ dependencies = [
     "google-api-python-client (>=2.200.0,<3.0.0)",
     "google-auth-oauthlib (>=1.4.1,<2.0.0)",
     "cryptography (>=50.0.1,<51.0.0)",
-    "apscheduler (==3.11.3)"
+    "apscheduler (==3.11.3)",
+    "httpx (>=0.28.1,<0.29.0)"
 ]
 
 

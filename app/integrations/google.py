@@ -26,6 +26,7 @@ CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/contacts",
 ]
 SHARED_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 TOKEN_FILENAME = "google/calendar-credentials.fernet"
@@ -243,5 +244,3 @@ def update_calendar_event(user_id: str, calendar_id: str, event_id: str, changes
         .patch(calendarId=calendar_id, eventId=event_id, body=changes)
         .execute()
     )
-
-# todo: allow friends to clearly send firstly text calendars, later also photos of their calendars/plans and llm structure it for future analysis and planning. This would be a great way to allow friends to share their plans with each other and the LLM can help us find common free time. The LLM could also suggest events based on our shared calendars.fine what i expect from the calendar tool, add instructions on how to style my calendar events
