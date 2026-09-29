@@ -41,8 +41,7 @@ class Settings(BaseSettings):
 
     # Everything that must survive a container restart lives on the mounted
     # volume. Keep application code and secrets out of this directory.
-    # Docker runs from /, so this resolves to the mounted /data volume there;
-    # locally it resolves to ./data in the project.
+    # Compose sets DATA_DIR=/data in containers; locally it defaults to ./data.
     data_dir: Path = Path("data")
 
     @field_validator("access_api_key")

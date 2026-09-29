@@ -18,12 +18,12 @@ class ListCalendarsParams(BaseModel):
 
 
 class ListEventsParams(BaseModel):
-    """Use calendar_id=None for all visible calendars and an optional UTC range."""
+    """List all matching events; set max_results only to limit tool output."""
 
-    calendar_id: str | None = None
     time_min: datetime | None = None
     time_max: datetime | None = None
-    max_results: int = Field(default=20, ge=1, le=50)
+    include_shared: bool = False
+    max_results: int | None = Field(default=None, ge=1, le=1000)
 
     @model_validator(mode="after")
     def valid_range(self) -> "ListEventsParams":
@@ -77,7 +77,7 @@ LIST_EVENTS_SCHEMA = {
     "type": "function",
     "function": {
         "name": "calendar_list_events",
-        "description": "List events in an optional ISO time range. Omit calendar_id to search every visible calendar. Each result has color_id, color (background hex), and color_name. Event color overrides calendar default.",
+        "description": "List all events in the requested time range from every calendar in the authenticated user's Google account. Results are paginated internally, so max_results is optional and unset means no artificial result limit. Shared/service-account calendars are excluded unless include_shared=true. Each result has color_id, color (background hex), and color_name.",
         "parameters": ListEventsParams.model_json_schema(),
     },
 }
@@ -219,70 +219,53 @@ def _color_name(
 
 def list_events(
     context: ToolContext,
-    calendar_id: str | None = None,
     time_min: datetime | None = None,
     time_max: datetime | None = None,
-    max_results: int = 20,
+    include_shared: bool = False,
+    max_results: int | None = None,
 ) -> str:
     now = datetime.now(UTC)
     links = User.get_by_id(context.user_id).get_calendar_links()
     shared_ids = {
-        str(link["calendar_id"]) for link in links if link["access_mode"] == "readonly"
-    }
+        str(link["calendar_id"])
+        for link in links
+        if link["access_mode"] == "readonly"
+    } if include_shared else set()
+    calendars = []
     service = None
-    if calendar_id:
-        calendars = [(calendar_id, calendar_id, None, {})]
-        if calendar_id.startswith("shared:"):
-            linked_id = calendar_id.removeprefix("shared:")
-            if linked_id not in shared_ids:
-                raise GoogleIntegrationError("This shared calendar is not linked to the user")
-        else:
-            service = get_calendar_service(context.user_id)
-            calendar_item = service.calendarList().get(calendarId=calendar_id).execute()
-            calendars[0] = (
-                calendar_id,
-                calendar_item.get("summary") or calendar_id,
-                calendar_item.get("colorId"),
+    try:
+        service = get_calendar_service(context.user_id)
+        calendars.extend(
+            (
+                item["id"],
+                item.get("summary") or item["id"],
+                item.get("colorId"),
                 {
-                    "background": calendar_item.get("backgroundColor"),
-                    "foreground": calendar_item.get("foregroundColor"),
+                    "background": item.get("backgroundColor"),
+                    "foreground": item.get("foregroundColor"),
                 },
             )
-    else:
-        calendars = []
-        try:
-            service = get_calendar_service(context.user_id)
-            calendars.extend(
-                (
-                    item["id"],
-                    item.get("summary") or item["id"],
-                    item.get("colorId"),
-                    {
-                        "background": item.get("backgroundColor"),
-                        "foreground": item.get("foregroundColor"),
-                    },
-                )
-                for item in service.calendarList().list().execute().get("items", [])
-                if item.get("id")
+            for item in service.calendarList().list().execute().get("items", [])
+            if item.get("id")
+        )
+    except GoogleIntegrationError:
+        if not shared_ids:
+            raise
+    if shared_ids:
+        shared_service = get_shared_calendar_service()
+        calendars.extend(
+            (
+                f"shared:{item['id']}",
+                item.get("summary") or item["id"],
+                item.get("colorId"),
+                {
+                    "background": item.get("backgroundColor"),
+                    "foreground": item.get("foregroundColor"),
+                },
             )
-        except GoogleIntegrationError:
-            if not shared_ids:
-                raise
-        if shared_ids:
-            shared_service = get_shared_calendar_service()
-            calendars.extend(
-                (
-                    f"shared:{item['id']}",
-                    item.get("summary") or item["id"],
-                    item.get("colorId"),
-                    {
-                        "background": item.get("backgroundColor"),
-                        "foreground": item.get("foregroundColor"),
-                    },
-                )
-                for item in shared_service.calendarList().list().execute().get("items", [])
-                if item.get("id") in shared_ids
-            )
+            for item in shared_service.calendarList().list().execute().get("items", [])
+            if item.get("id") in shared_ids
+        )
     events: list[dict] = []
     for current_calendar_id, calendar_name, calendar_color_id, calendar_colors in calendars:
         service_for_calendar = service
@@ -295,7 +278,9 @@ def list_events(
         event_colors = color_response.get("event", {})
         calendar_palette = color_response.get("calendar", {})
         page_token: str | None = None
-        while len(events) < max_results:
+        calendar_events = 0
+        while max_results is None or calendar_events < max_results:
+            remaining = max_results - calendar_events if max_results is not None else 250
             response = (
                 service_for_calendar.events()
                 .list(
@@ -304,12 +289,12 @@ def list_events(
                     timeMax=(time_max or now + timedelta(days=14)).isoformat(),
                     singleEvents=True,
                     orderBy="startTime",
-                    maxResults=min(250, max_results - len(events)),
+                    maxResults=min(250, remaining),
                     pageToken=page_token,
                 )
                 .execute()
             )
-            events.extend(
+            normalized_events = [
                 _event_item(
                     item,
                     calendar_name,
@@ -321,12 +306,14 @@ def list_events(
                     calendar_palette,
                 )
                 for item in response.get("items", [])
-            )
+            ]
+            events.extend(normalized_events)
+            calendar_events += len(normalized_events)
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
     events.sort(key=lambda item: item["start"].get("dateTime", item["start"].get("date", "")))
-    return json.dumps(events[:max_results])
+    return json.dumps(events if max_results is None else events[:max_results])
 
 
 def get_event(context: ToolContext, calendar_id: str, event_id: str) -> str:

@@ -47,7 +47,7 @@ def chat(
     _: None = Depends(require_api_key),
 ) -> ChatResponse:
     user_id = resolve_user(request.user_id, request.user_name, request.telegram_id)
-    result = run_agent_loop(user_id, request.message)
+    result = run_agent_loop(user_id, request.message, is_telegram=request.telegram_id is not None)
     return ChatResponse(
         reply=result.reply,
         pending_confirmations=result.pending_confirmations,

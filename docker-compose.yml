@@ -9,6 +9,8 @@ services:
       - ./logs:/logs
     env_file:
       - .env
+    environment:
+      DATA_DIR: /data
     networks:
       - perry_net
     restart: unless-stopped
