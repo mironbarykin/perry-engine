@@ -13,7 +13,64 @@ to `/data` in the Docker container. It contains:
 - `db/perry.sqlite3` — short conversation memory, users, OAuth connection
   metadata, pending confirmations, and future scheduled-action definitions.
 - `users/<local-id>/` — user-owned encrypted integration credentials and
-  future exports. `p1` is bootstrapped as Miron.
+  long-term memory vaults and future exports. `p1` is bootstrapped as Miron.
+
+### Obsidian memory vaults
+
+Each user has an independent Obsidian-compatible vault at
+`users/<local-id>/cognee/`. Perry creates `conversations/`, `daily/`,
+`entities/`, `topics/`, and `inbox/` inside it. Conversation turns are
+appended to a daily Markdown file, and a background scanner detects Markdown
+changes and queues them in SQLite for the future Cognee indexer. Markdown is
+the source of truth; the current foundation does not claim that files are
+Cognee-indexed yet.
+
+Perry exposes memory tools to the agent for searching and reading this vault.
+Writing a durable personal note creates a confirmation proposal first; the
+note is only written after the communicator confirms it through the existing
+confirmation endpoint.
+
+Cognee integration is disabled by default with `COGNEE_ENABLED=false`. When
+enabled and installed, Perry stores Cognee's derived data below each user's
+`cognee/.cognee/` directory and scopes datasets to that user's canonical ID.
+The current Cognee release requires `openai<3`, while Perry uses
+`openai>=3.6`; therefore Cognee is intentionally an adapter dependency rather
+than a default dependency until the LLM client migration is designed and
+tested. The indexing worker never reports a file as indexed while Cognee is
+disabled or unavailable.
+
+The Cognee service sets its process-level system database root to
+`/data/cognee-system` before importing Cognee. Per-user dataset names and the
+shared mounted `/data` volume provide the tenant boundary; do not expose the
+Cognee service port publicly.
+
+### Running Cognee as a separate container
+
+The production and development Compose files include a separate `cognee`
+service. It shares the `/data` volume with Perry, but has its own Python
+environment and is reachable only on the Compose network.
+
+Set these values in `.env` before enabling it:
+
+```env
+COGNEE_ENABLED=true
+COGNEE_SERVICE_TOKEN=<long-random-internal-token>
+COGNEE_OPENAI_API_KEY=<OpenAI-compatible-key>
+COGNEE_LLM_MODEL=openai/gpt-4o-mini
+COGNEE_LLM_ENDPOINT=
+```
+
+Then run locally with:
+
+```text
+docker compose -f docker-compose.development.yml up --build
+```
+
+The deployment script uploads `Dockerfile.cognee` and `cognee_service.py`;
+the remote startup builds the Cognee image locally and waits for its health
+check before starting Perry. If using OpenRouter, set
+`COGNEE_LLM_ENDPOINT=https://openrouter.ai/api/v1` and use a model identifier
+supported by OpenRouter.
 
 Copy `.env.example` to `.env` and set a non-empty `ACCESS_API_KEY`. The engine
 refuses to start if that key is blank.

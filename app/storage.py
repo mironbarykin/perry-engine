@@ -130,6 +130,31 @@ def initialize_database() -> None:
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS memory_documents (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                relative_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                modified_at_ns INTEGER NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                last_indexed_at TEXT,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'indexed', 'failed')),
+                last_error TEXT,
+                PRIMARY KEY(user_id, relative_path)
+            );
+            CREATE TABLE IF NOT EXISTS memory_sync_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                relative_path TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('upsert', 'delete')),
+                status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'completed', 'failed')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_sync_jobs_status
+                ON memory_sync_jobs(status, created_at);
             CREATE TABLE IF NOT EXISTS basketball_leagues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 liga_id INTEGER UNIQUE NOT NULL,
@@ -319,6 +344,129 @@ class User:
                 )
                 """,
                 (self.id, self.id, settings.max_working_turns),
+            )
+
+    def queue_memory_job(self, relative_path: str, content_hash: str, size_bytes: int, modified_at_ns: int) -> None:
+        """Record a changed vault file and queue it for the future Cognee indexer."""
+        now = _now()
+        with connection() as db:
+            db.execute(
+                """
+                INSERT INTO memory_documents
+                    (user_id, relative_path, content_hash, size_bytes, modified_at_ns,
+                     last_seen_at, status, last_error)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)
+                ON CONFLICT(user_id, relative_path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    size_bytes = excluded.size_bytes,
+                    modified_at_ns = excluded.modified_at_ns,
+                    last_seen_at = excluded.last_seen_at,
+                    status = CASE
+                        WHEN memory_documents.content_hash = excluded.content_hash
+                         AND memory_documents.status = 'indexed'
+                        THEN memory_documents.status
+                        ELSE 'pending'
+                    END,
+                    last_error = NULL
+                """,
+                (self.id, relative_path, content_hash, size_bytes, modified_at_ns, now),
+            )
+            existing = db.execute(
+                """
+                SELECT id FROM memory_sync_jobs
+                WHERE user_id = ? AND relative_path = ? AND operation = 'upsert'
+                  AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (self.id, relative_path),
+            ).fetchone()
+            if existing is None:
+                db.execute(
+                    """
+                    INSERT INTO memory_sync_jobs
+                        (user_id, relative_path, operation, status, created_at, updated_at)
+                    VALUES (?, ?, 'upsert', 'queued', ?, ?)
+                    """,
+                    (self.id, relative_path, now, now),
+                )
+
+    def get_memory_status(self) -> dict[str, int]:
+        """Return counts for the user's Markdown memory files and queued jobs."""
+        with connection() as db:
+            documents = db.execute(
+                "SELECT status, COUNT(*) AS count FROM memory_documents WHERE user_id = ? GROUP BY status",
+                (self.id,),
+            ).fetchall()
+            jobs = db.execute(
+                "SELECT status, COUNT(*) AS count FROM memory_sync_jobs WHERE user_id = ? GROUP BY status",
+                (self.id,),
+            ).fetchall()
+        result = {f"documents_{row['status']}": int(row["count"]) for row in documents}
+        result.update({f"jobs_{row['status']}": int(row["count"]) for row in jobs})
+        return result
+
+    @staticmethod
+    def claim_memory_job() -> sqlite3.Row | None:
+        """Claim the oldest queued memory job across users atomically."""
+        now = _now()
+        with connection() as db:
+            return db.execute(
+                """
+                UPDATE memory_sync_jobs SET status = 'running', attempts = attempts + 1, updated_at = ?
+                WHERE id = (
+                    SELECT id FROM memory_sync_jobs
+                    WHERE status = 'queued'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                )
+                RETURNING id, user_id, relative_path, operation, attempts
+                """,
+                (now,),
+            ).fetchone()
+
+    @staticmethod
+    def complete_memory_job(job_id: int) -> None:
+        with connection() as db:
+            db.execute(
+                "UPDATE memory_sync_jobs SET status = 'completed', updated_at = ?, last_error = NULL WHERE id = ?",
+                (_now(), job_id),
+            )
+
+    @staticmethod
+    def fail_memory_job(job_id: int, error: str) -> None:
+        with connection() as db:
+            db.execute(
+                """
+                UPDATE memory_sync_jobs
+                SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'queued' END,
+                    updated_at = ?, last_error = ?
+                WHERE id = ?
+                """,
+                (_now(), error[:2000], job_id),
+            )
+
+    @staticmethod
+    def mark_memory_document_indexed(user_id: str, relative_path: str) -> None:
+        with connection() as db:
+            db.execute(
+                """
+                UPDATE memory_documents
+                SET status = 'indexed', last_indexed_at = ?, last_error = NULL
+                WHERE user_id = ? AND relative_path = ?
+                """,
+                (_now(), user_id, relative_path),
+            )
+
+    @staticmethod
+    def mark_memory_document_failed(user_id: str, relative_path: str, error: str) -> None:
+        with connection() as db:
+            db.execute(
+                """
+                UPDATE memory_documents
+                SET status = 'failed', last_error = ?
+                WHERE user_id = ? AND relative_path = ?
+                """,
+                (error[:2000], user_id, relative_path),
             )
 
     def save_oauth_state(self, state: str, code_verifier: str, expires_at: str) -> None:

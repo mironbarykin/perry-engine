@@ -11,10 +11,35 @@ services:
       - .env
     environment:
       DATA_DIR: /data
+      COGNEE_ENABLED: ${COGNEE_ENABLED:-false}
+      COGNEE_SERVICE_URL: http://cognee:8001
+      COGNEE_SERVICE_TOKEN: ${COGNEE_SERVICE_TOKEN}
     networks:
       - perry_net
     restart: unless-stopped
- 
+    depends_on:
+      cognee:
+        condition: service_healthy
+
+  cognee:
+    container_name: perry_cognee
+    build:
+      context: .
+      dockerfile: Dockerfile.cognee
+    environment:
+      COGNEE_SERVICE_TOKEN: ${COGNEE_SERVICE_TOKEN}
+      COGNEE_OPENAI_API_KEY: ${COGNEE_OPENAI_API_KEY}
+      COGNEE_LLM_MODEL: ${COGNEE_LLM_MODEL:-openai/gpt-4o-mini}
+      COGNEE_LLM_ENDPOINT: ${COGNEE_LLM_ENDPOINT:-}
+      DATA_ROOT_DIRECTORY: /data
+      SYSTEM_ROOT_DIRECTORY: /data/cognee-system
+    volumes:
+      - ./data:/data
+    networks:
+      - perry_net
+    restart: unless-stopped
+    ports:
+          - "127.0.0.1:8002:8001"
 networks:
   perry_net:
     external: true

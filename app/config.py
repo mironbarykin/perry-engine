@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Keep this bounded, but allow a normal multi-event planning request to
     # reach a final answer after its confirmations have been prepared.
     max_loop_iterations: int = Field(default=12, ge=1)
+    memory_sync_interval_seconds: float = Field(default=15.0, gt=0)
+    cognee_enabled: bool = False
+    cognee_service_url: str = "http://cognee:8001"
+    cognee_service_token: str = ""
+    cognee_request_timeout_seconds: float = Field(default=120.0, gt=0)
 
     # Everything that must survive a container restart lives on the mounted
     # volume. Keep application code and secrets out of this directory.

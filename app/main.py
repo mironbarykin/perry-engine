@@ -1,4 +1,5 @@
 import secrets
+import asyncio
 from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
@@ -8,6 +9,7 @@ from googleapiclient.errors import HttpError
 
 from app.agent_loop import run_agent_loop
 from app.config import settings
+from app.memory import run_memory_index_worker, run_memory_sync_scanner
 from app.integrations.google import (
     GoogleIntegrationError,
     begin_calendar_authorization,
@@ -19,6 +21,7 @@ from app.integrations.google import (
     get_tasks_service,
 )
 from app.models import ChatRequest, ChatResponse, SenderIdentity
+from app.memory_vault import write_note
 from pydantic import BaseModel, Field
 from app.storage import User, confirm_pending_action, initialize_database, resolve_user
 
@@ -26,7 +29,15 @@ from app.storage import User, confirm_pending_action, initialize_database, resol
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
-    yield
+    stop_event = asyncio.Event()
+    scanner = asyncio.create_task(run_memory_sync_scanner(stop_event))
+    indexer = asyncio.create_task(run_memory_index_worker(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        await scanner
+        await indexer
 
 
 app = FastAPI(title="Perry Engine", lifespan=lifespan)
@@ -184,6 +195,9 @@ def confirm_action(
                 tasklist=payload["tasklist_id"], task=payload["task_id"]
             ).execute()
             event = {"id": payload["task_id"]}
+        elif action_type == "memory.write_note":
+            path = write_note(user_id, str(payload["path"]), str(payload["content"]))
+            event = {"path": str(path.relative_to(User.get_by_id(user_id).data_path))}
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported confirmation action")
     except GoogleIntegrationError as exc:
